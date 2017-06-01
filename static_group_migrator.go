@@ -30,6 +30,11 @@ type deviceGroup struct {
 	Value                string      `json:"value"`
 }
 
+type device struct {
+	Ipaddr4 string `json:"ipaddr4"`
+	Ipaddr6 string `json:"ipaddr6"`
+}
+
 type keyDetail struct {
 	KeyType   string `json:"key_type"`
 	Addr      string `json:"addr"`
@@ -48,7 +53,7 @@ func getDeviceGroupIPs(ID string, eh *ehop.EDA) []string {
 		os.Exit(-1)
 	}
 
-	var deviceList []ehop.Device
+	var deviceList []device
 
 	error = json.NewDecoder(resp.Body).Decode(&deviceList)
 	if error != nil {
@@ -120,7 +125,7 @@ func addDeviceGroup(dg deviceGroup, eh *ehop.EDA) string {
 	}
 
 	if len(deviceGroupList) == 0 {
-		body := `{"description": "` + dg.Description + `","dynamic": false,"field": null,"include_custom_devices":` + strconv.FormatBool(dg.IncludeCustomDevices) + `,"name": "` + dg.Name + `","value": null}`
+		body := `{"description": "` + dg.Description + `","dynamic": false, "include_custom_devices":` + strconv.FormatBool(dg.IncludeCustomDevices) + `,"name": "` + dg.Name + `}`
 		resp, error = ehop.CreateEhopRequest("POST", "devicegroups", body, eh)
 		defer resp.Body.Close()
 
@@ -157,13 +162,12 @@ func main() {
 	keyFile := askForInput("What is the source EDA/ECA keyFile?")
 	srcEDA := ehop.NewEDAfromKey(keyFile)
 
-	//keyFile = askForInput("What is the destion EDA/ECA keyFile?")
-	//dstEDA := ehop.NewEDAfromKey(keyFile)
+	keyFile = askForInput("What is the destion EDA/ECA keyFile?")
+	dstEDA := ehop.NewEDAfromKey(keyFile)
 
 	filter := askForInput("Device group name filter? Leave blank for no filter")
-	//body := `{"cycle": "auto","from": ` + strconv.Itoa(lookback) + `, "metric_category": "net_detail", "metric_specs": [{"name": "pkts_in"},{"name": "pkts_out"},{"name": "bytes_in"},{"name": "bytes_out"}],"object_ids": [` + deviceID + `],"object_type": "device","until": 0}`
 
-	//Get all devices from the system
+	//Get all devices from the system, filtered with user input
 	resp, error := ehop.CreateEhopRequest("GET", "devicegroups?all=false&name="+filter, ``, srcEDA)
 	defer resp.Body.Close()
 
@@ -175,7 +179,7 @@ func main() {
 		os.Exit(-1)
 	}
 
-	//Store into Structs
+	//Store device groups into Structs
 	var deviceGroupList []deviceGroup
 
 	error = json.NewDecoder(resp.Body).Decode(&deviceGroupList)
@@ -185,59 +189,42 @@ func main() {
 	}
 	fmt.Println("Devices Groups successfully queried.")
 	fmt.Println("Total Groups (including Dynamic): " + strconv.Itoa(len(deviceGroupList)))
-
+	fmt.Println("Filtering Static Groups and adding appropriate devices")
+	dgCounter := 0
 	for _, dg := range deviceGroupList {
 		if !dg.Dynamic {
-			//newDeviceGroupID := addDeviceGroup(dg, dstEDA)
+			dgCounter++
 
-			fmt.Println(dg.Name)
-			fmt.Println(dg.Description)
+			newDeviceGroupID := addDeviceGroup(dg, dstEDA)
+
+			fmt.Println(dg.Name + " -- " + dg.Description)
 			deviceIPList := getDeviceGroupIPs(string(dg.ID), srcEDA)
 
+			deviceCounter := 0
 			for _, IP := range deviceIPList {
-				/*dstDeviceID := findDeviceID(IP, dstEDA)
+				dstDeviceID := findDeviceID(IP, dstEDA)
 				if dstDeviceID == "" {
+					fmt.Println("Device " + IP + " not found for device group " + newDeviceGroupID)
+				} else {
+					deviceCounter++
+					body := `{"assign": [` + dstDeviceID + `]}`
+					resp, error = ehop.CreateEhopRequest("POST", "devicegroups/"+newDeviceGroupID+"/devices", body, srcEDA)
+					defer resp.Body.Close()
 
+					if error != nil {
+						fmt.Println("Error assigning device " + IP + " to device group " + newDeviceGroupID + ": " + error.Error())
+						os.Exit(-1)
+					} else if resp.StatusCode != http.StatusNoContent {
+						fmt.Println("Non-204 status code requesting peer metrics: " + resp.Status)
+						//os.Exit(-1)
+					}
 				}
-				*/
-				fmt.Println(IP)
 			}
+			fmt.Println(strconv.Itoa(deviceCounter) + " devices migrated")
 			fmt.Println("")
-
 		}
 
 	}
-
-	/*
-		peerList := map[string]peerDetails{}
-
-		for _, stat := range metricRsp.Stats {
-			for _, values := range stat.Values {
-				for _, metric := range values {
-					peerList[metric.Key.Addr] = newPeerDetails()
-				}
-			}
-		}
-
-		for _, stat := range metricRsp.Stats {
-			for i, values := range stat.Values {
-				for _, metric := range values {
-					p := peerList[metric.Key.Addr]
-					p.Metrics[i] = metric.Value
-					peerList[metric.Key.Addr] = p
-				}
-			}
-		}
-
-		f, _ := os.Create("device_" + deviceID + "_peer_details.csv")
-
-		io.WriteString(f, "PeerIP,Packets In,Packets Out,Bytes In,Bytes Out\n")
-		for ip, peerDetails := range peerList {
-			m := peerDetails.Metrics
-			io.WriteString(f, ip+","+strconv.FormatInt(m[0], 10)+","+strconv.FormatInt(m[1], 10)+","+strconv.FormatInt(m[2], 10)+","+strconv.FormatInt(m[3], 10)+"\n")
-		}
-		f.Close()
-
-		fmt.Println("File device_" + deviceID + "_peer_details.csv successfully written")
-	*/
+	fmt.Println(strconv.Itoa(dgCounter) + " device groups migrated")
+	fmt.Println("")
 }
